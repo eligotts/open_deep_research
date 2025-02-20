@@ -1,0 +1,230 @@
+You an expert at building agentic workflows in Langgraph. Refer to the following technical report when working on this project:
+
+Below is a comprehensive technical report for your Agentic Newsletter Generation project. This report is intended for a skilled software engineer and covers the system from a high-level overview down to the detailed Pydantic model definitions and workflow structure.
+
+Technical Report: Agentic Newsletter Generation System
+
+1. Overview
+
+The Agentic Newsletter Generation System is designed to automate the end-to-end creation of newsletters. It splits the process into two major phases:
+	1.	Newsletter Creation Process:
+A static, user-guided process where the user inputs metadata (e.g., topic, target audience, tone) to create a configuration. This configuration is stored using a Pydantic-based schema that covers a wide range of newsletter types while ensuring usability and flexibility.
+	2.	Newsletter Generation Process:
+An agent-driven workflow that executes research and writing tasks based on the previously created configuration. This process is further subdivided into:
+	•	Ideation: Generating a high-level research plan that includes execution items.
+	•	Research: Performing targeted research tasks, where each research step can depend on prior outputs.
+	•	Generation: Assembling the final newsletter using a structured template that organizes content into sections.
+
+The system is built with flexibility in mind: it accommodates both newsletters with predefined templates and those with just a general topic. The execution plan is dynamically updated by an LLM, meaning that steps such as “plan reconsideration” allow for iterative refinement based on the evolving outputs.
+
+2. High-Level Architecture
+
+2.1. Newsletter Creation Process
+	•	Objective:
+Enable users to define all high-level parameters (topic, tone, audience, etc.) without being overwhelmed by details. The end result is a complete configuration (a Pydantic schema) that drives the generation process.
+	•	Key Components:
+	•	Core Metadata: Topic, title, newsletter type, target audience, tone, content depth.
+	•	Organizational Structure: Predefined report structure, section configurations (name, description, research requirements).
+	•	Content Parameters: Recurring themes, primary sources, mission objectives.
+	•	Scheduling & Technical Options: Frequency, search API, research depth, model identifiers.
+
+2.2. Newsletter Generation Process
+	•	Objective:
+Utilize an agentic workflow to iteratively research, refine, and generate the newsletter content based on the initial configuration.
+	•	Subdivisions:
+	•	Ideation:
+Generate an initial research plan containing a series of execution items. These items are placeholders for research tasks, plan reconsiderations, and template adjustments.
+	•	Research:
+Execute the individual research tasks. Each research item specifies a goal, context, and desired output. Often, later research depends on outputs from previous items.
+	•	Generation:
+Assemble the final newsletter using a structured template (a tree-like structure of sections). The template is built incrementally: early iterations may only include basic ideas, while later ones become detailed with final content.
+
+3. Detailed Workflow & Execution Plan Structure
+
+3.1. Execution Plan Overview
+
+An execution plan is an ordered list of execution items that guide the research and writing process. Execution items are of three primary types:
+	1.	Research Items:
+	•	Purpose: To perform a discrete research task.
+	•	Fields: Research goal, tools/methods to use, effort level (e.g., “low”, “medium”, “high”), important context, and the desired output.
+	•	Dependency Consideration: Often, a research item’s context or follow-up depends on outputs from earlier steps.
+	2.	Plan Reconsideration Items:
+	•	Purpose: To reassess and update the research plan based on outputs from pivotal research steps.
+	•	Fields: A forward-looking dependency note that states, for example, “given the AI headlines obtained, update the plan to include detailed research on each headline.”
+	•	Usage: These items allow the plan to be adaptive; they signal that the subsequent execution steps will be refined based on the latest data.
+	3.	Template Builder Items:
+	•	Purpose: To define or update the structure/template of the final newsletter.
+	•	Fields: May include preliminary section outlines, desired formatting, and content placement.
+	•	Dynamic Nature: At the beginning, this might simply be “investigate possible structures.” As research progresses, the template can be refined with more precise details.
+
+3.2. Handling Dynamic Dependencies
+
+Since subsequent research often depends on outputs that are not known at initial plan creation, plan reconsideration steps are critical. They are inserted into the execution plan immediately after pivotal research steps. The dependency field for these items is written in natural language to explain that subsequent steps (e.g., “investigate each headline in depth”) will be refined once the necessary research outputs are available.
+
+Key Points:
+	•	Natural Language Dependencies:
+Instead of rigid placeholders, the dependencies field can say things like:
+	“Depends on the final set of AI headlines from Research Item 1. Upon receiving these headlines, update the detailed research goals for each headline.”
+	•	Iteration and Flexibility:
+The execution plan is designed to be regenerated by an LLM, meaning it can be fluid. Early items set the stage, and subsequent items are iteratively refined based on research findings.
+
+4. Final Newsletter Template Framework
+
+The final output newsletter is represented as a tree-like structure composed of sections. Each section is a Pydantic model that captures both content and metadata.
+
+4.1. Goals for the Template
+	•	Multi-Stage Representation:
+Each section can evolve from a basic idea to a fully completed write-up. The state is managed via a detail_level field (IDEA, PARTIAL, COMPLETE).
+	•	Hierarchical Structure:
+Sections can have nested subsections. This enables both broad overviews and detailed subtopics.
+	•	Flexible Dependencies:
+Sections can indicate dependencies in natural language, ensuring that if a section’s content depends on another (e.g., a synthesis section dependent on both current event and historical event data), that relationship is captured.
+	•	Accommodate Varying Templates:
+Whether the newsletter has a strict predefined template or a looser structure, the model supports both by including fields like desired_structure and additional_context.
+
+4.2. Pydantic Models
+
+Below is the detailed Pydantic model code that captures the newsletter template:
+
+from enum import Enum
+from typing import List, Optional
+from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Enum to track the detail level for each section
+# ---------------------------------------------------------------------------
+class SectionDetailLevel(str, Enum):
+    IDEA = "idea"         # Basic placeholder or concept
+    PARTIAL = "partial"   # Some research/template in place
+    COMPLETE = "complete" # Final content ready
+
+# ---------------------------------------------------------------------------
+# Model for a section of the final newsletter
+# ---------------------------------------------------------------------------
+class NewsletterSection(BaseModel):
+    name: str = Field(..., description="Title of the section (e.g., 'Introduction', 'Analysis').")
+    definition: str = Field(..., description="A brief explanation of what this section should cover.")
+    template: Optional[str] = Field(
+        None, description="Optional instructions or formatting guidelines for the final output."
+    )
+    output: Optional[str] = Field(
+        None, description="Final written content for the section (populated when complete)."
+    )
+    detail_level: SectionDetailLevel = Field(
+        SectionDetailLevel.IDEA,
+        description="The current state of the section: idea, partial, or complete."
+    )
+    dependencies: Optional[List[str]] = Field(
+        default_factory=list,
+        description=(
+            "Natural language notes on dependencies. E.g., 'Depends on research output from AI headlines.'"
+        )
+    )
+    children: List["NewsletterSection"] = Field(
+        default_factory=list,
+        description="Nested child sections to form a tree-like structure."
+    )
+
+# Allow recursive models for nested sections.
+NewsletterSection.update_forward_refs()
+
+# ---------------------------------------------------------------------------
+# Overall Newsletter Template Model
+# ---------------------------------------------------------------------------
+class NewsletterTemplate(BaseModel):
+    title: str = Field(..., description="The title of the newsletter.")
+    topic: str = Field(..., description="Main topic or focus of the newsletter.")
+    summary: Optional[str] = Field(None, description="Brief abstract or summary of the newsletter.")
+    sections: List[NewsletterSection] = Field(
+        default_factory=list,
+        description="Tree-like structure of newsletter sections."
+    )
+    desired_structure: Optional[str] = Field(
+        None, description="Predefined structure description, if available."
+    )
+    additional_context: Optional[str] = Field(
+        None, description="Extra context or guidance for content generation."
+    )
+
+# ---------------------------------------------------------------------------
+# Example usage of the NewsletterTemplate model
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    ai_news_template = NewsletterTemplate(
+        title="Top AI News of the Week",
+        topic="Artificial Intelligence",
+        summary="A newsletter featuring top headlines and in-depth analysis on AI developments.",
+        desired_structure="Headline, Summary, Main Body (with multiple news items), Conclusion",
+        additional_context="Target audience: technical professionals interested in AI advancements.",
+        sections=[
+            NewsletterSection(
+                name="Headline",
+                definition="The main headline of the newsletter.",
+                template="Generate a catchy headline summarizing the week's AI news.",
+                detail_level=SectionDetailLevel.PARTIAL
+            ),
+            NewsletterSection(
+                name="Summary",
+                definition="A brief two-sentence overview of the newsletter content.",
+                template="Provide a concise overview of key developments.",
+                detail_level=SectionDetailLevel.IDEA,
+                dependencies=["Depends on final selection of AI news items."]
+            ),
+            NewsletterSection(
+                name="Main Body",
+                definition="Detailed coverage of each AI news item.",
+                template="For each news item: include headline, summary, and link for further reading.",
+                detail_level=SectionDetailLevel.IDEA,
+                dependencies=["Requires output from initial research on top AI headlines."],
+                children=[
+                    NewsletterSection(
+                        name="News Item 1",
+                        definition="Details for the first AI news item.",
+                        template="Name, summary, and link.",
+                        detail_level=SectionDetailLevel.IDEA,
+                        dependencies=["Depends on selection of top news items."]
+                    ),
+                    # Additional child sections may be added dynamically.
+                ]
+            ),
+            NewsletterSection(
+                name="Conclusion",
+                definition="Final thoughts and wrap-up for the newsletter.",
+                template="Summarize the overall theme and provide closing remarks.",
+                detail_level=SectionDetailLevel.IDEA,
+                dependencies=["May depend on the overall tone and selected news items."]
+            )
+        ]
+    )
+
+    print(ai_news_template.json(indent=2))
+
+5. Integration & Implementation Guidelines
+
+5.1. Newsletter Creation Phase
+	•	User Input Interface:
+Provide a user interface that maps directly to the core metadata fields defined in your Pydantic configuration schema. This ensures that all high-level parameters are captured without overwhelming the user.
+	•	Static Schema Generation:
+The user’s input results in a static JSON (or equivalent) configuration that fully populates the Pydantic model for newsletter creation.
+
+5.2. Agentic Workflow for Generation
+	•	Execution Plan Generation:
+Use an LLM (or another planning module) to generate an initial execution plan. This plan is a list of execution items (research, plan reconsideration, template builder). Each item will include natural language fields indicating dependencies and expected outcomes.
+	•	Iterative Refinement:
+At each pivotal research step, insert a plan reconsideration item. These items capture forward-looking dependency notes, for example, “Update detailed research steps after obtaining the top headlines.”
+	•	Dynamic Template Update:
+As research results are gathered, update the newsletter template. The dependencies field in each NewsletterSection ensures that if a section depends on external research output, it is clearly marked and can be revisited when data becomes available.
+
+5.3. Final Assembly
+	•	Generation Agent:
+Once research is complete and the template has been updated, a final generation agent aggregates all sections. It ensures each section’s detail_level is updated to COMPLETE and that the final output fields are filled with the generated content.
+	•	Output Composition:
+The complete newsletter is assembled from the root of the tree structure defined in the NewsletterTemplate. The final output is a coherent newsletter built from the modular, structured sections.
+
+6. Conclusion
+
+This technical report outlines a robust, flexible framework for the automated generation of newsletters. By splitting the project into the creation process (user-defined metadata) and the generation process (agentic workflow with execution items), we create a system that is both structured and adaptive. The use of Pydantic models for both the configuration schema and the final newsletter template ensures type safety, clarity, and ease of integration. The execution plan’s design—featuring research, plan reconsideration, and template builder steps—enables iterative refinement, making the system capable of handling dynamic dependencies and evolving research outputs.
+
+A skilled software engineer can implement this system by following the modular design described above, integrating LLM-driven execution plan generation, and iteratively updating the newsletter template as research is conducted. This design balances structure with the flexibility needed to support a wide range of newsletter types and evolving content requirements.
+
+This concludes the technical report for your Agentic Newsletter Generation project.

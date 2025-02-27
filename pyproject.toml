@@ -16,6 +16,8 @@ dependencies = [
     "openai>=1.61.0",
     "tavily-python>=0.5.0",
     "langchain-groq>=0.2.4",
+    "ipykernel>=6.29.5",
+    "langchain-mcp-tools>=0.0.1",
 ]
 
 [project.optional-dependencies]

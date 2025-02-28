@@ -52,27 +52,13 @@ class LoggingToolNode(ToolNode):
             for i, tool_call in enumerate(tool_calls):
                 if i < len(response_messages):
                     response = response_messages[i].content if hasattr(response_messages[i], "content") else str(response_messages[i])
-                    
-                    # Safely extract tool name and args
-                    try:
-                        if isinstance(tool_call, dict):
-                            tool_name = tool_call.get("name", "unknown_tool")
-                            tool_args = tool_call.get("args", {})
-                        else:
-                            tool_name = getattr(tool_call, "name", "unknown_tool")
-                            tool_args = getattr(tool_call, "args", {})
-                        
-                        # Use the dedicated tool call logging method
-                        logger.log_tool_call(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            tool_response=response,
-                            context=f"tool_execution_{tool_name}"
-                        )
-                    except Exception as e:
-                        # If logging fails, log the error but don't crash
-                        if logger:
-                            logger.log_error(e, f"Error logging tool execution: {str(tool_call)}")
+                    # Use the dedicated tool call logging method
+                    logger.log_tool_call(
+                        tool_name=tool_call.name,
+                        tool_args=tool_call.args,
+                        tool_response=response,
+                        context=f"tool_execution_{tool_call.name}"
+                    )
         
         return result
 
@@ -695,29 +681,16 @@ def call_model(state: ResearchBlockState):
             context="agent_with_tools"
         )
         
-        # Log any tool calls - safely handle different tool call formats
+        # Log any tool calls
         if hasattr(response, "tool_calls") and response.tool_calls:
             for tool_call in response.tool_calls:
-                try:
-                    # Try to get tool name and args - handle both object and dict formats
-                    if isinstance(tool_call, dict):
-                        tool_name = tool_call.get("name", "unknown_tool")
-                        tool_args = tool_call.get("args", {})
-                    else:
-                        tool_name = getattr(tool_call, "name", "unknown_tool")
-                        tool_args = getattr(tool_call, "args", {})
-                    
-                    # Use the dedicated tool call logging method
-                    logger.log_tool_call(
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        tool_response="Pending tool response",
-                        context=f"tool_call_request_{tool_name}"
-                    )
-                except Exception as e:
-                    # If logging fails, log the error but don't crash
-                    if logger:
-                        logger.log_error(e, f"Error logging tool call: {str(tool_call)}")
+                # Use the dedicated tool call logging method
+                logger.log_tool_call(
+                    tool_name=tool_call.name,
+                    tool_args=tool_call.args,
+                    tool_response="Pending tool response",
+                    context=f"tool_call_request_{tool_call.name}"
+                )
     
     return {"messages": [response]}
 

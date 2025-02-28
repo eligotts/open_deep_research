@@ -10,6 +10,7 @@ src/open_deep_research/graph.py
 src/open_deep_research/logger.py
 src/open_deep_research/newsletter_graph.py
 src/open_deep_research/newsletter_prompts.py
+src/open_deep_research/newsletter_prompts_old.py
 src/open_deep_research/newsletter_state.py
 src/open_deep_research/prompts.py
 src/open_deep_research/state.py

@@ -244,91 +244,47 @@ Write in a direct, instructional voice using active language. Your plan should r
 Now create a comprehensive execution plan based on the provided newsletter metadata. The plan should enable autonomous generation of a high-quality newsletter that fully embodies the publication's established identity and purpose.
 """
 
-execution_block_creation_instructions = """You are an expert workflow planner tasked with advancing a modular newsletter production process. You have the following inputs:
-	1.	Initial Execution Plan: A comprehensive, step-by-step plan outlining the creation of a newsletter.
-	2.	Completed Execution Blocks: A list of research, template building, and reconsideration blocks that have already been executed (each with their outputs).
-	3.	Recent Reconsideration Block: A block that was just completed, indicating a checkpoint where the current outputs were evaluated and new steps are needed.
 
-Using these inputs, generate the next set of actionable execution blocks that will move the workflow forward. Important: Every block you generate must be immediately executable. In other words, do not create any execution block that depends on outputs which are not yet available. For instance, if a research block requires the outputs of previous research steps (e.g., for pairing analysis), do not generate it now. Instead, if additional dependent analysis is needed, stop at that point and end the output with a reconsideration block.
+# ---------------------------------------------------------------------------
+# Enum to track the level of detail for each section
+# ---------------------------------------------------------------------------
+class SectionDetailLevel(str, Enum):
+    IDEA = "idea"         # Basic idea/placeholder
+    PARTIAL = "partial"   # Some research/template in place
+    COMPLETE = "complete" # Final content is ready
 
-Structure your answer as a list of execution blocks. The list should include:
-	•	Research Blocks: Each with a clear research goal, desired output, and any specific input parameters or evaluation criteria. Ensure that these blocks do not require any outputs from blocks that have not yet been executed.
-	# •	Template Building Blocks: (if applicable) with clear goals for drafting content or outlines.
-	•	A Final Reconsideration Block: The output list must conclude with a reconsideration block. This block will serve as a checkpoint to evaluate progress, integrate any dependency outputs, and propose potential adjustments to the plan for subsequent execution cycles.
+# ---------------------------------------------------------------------------
+# Model for a section of the final newsletter
+# ---------------------------------------------------------------------------
+class NewsletterSection(BaseModel):
+    name: str = Field(..., description="The title of the section (e.g., 'Introduction', 'Analysis').")
+    definition: str = Field(..., description="A brief explanation of what this section should cover.")
+    template: Optional[str] = Field(
+        None, description="Optional instructions or formatting guidelines for the section's final output."
+    )
+    output: Optional[str] = Field(
+        None, description="The final written content of the section (populated when complete)."
+    )
+    detail_level: SectionDetailLevel = Field(
+        SectionDetailLevel.IDEA,
+        description="Indicates the current state of the section: idea, partial, or complete."
+    )
+    dependencies: Optional[List[str]] = Field(
+        default_factory=list,
+        description=(
+            "Notes about dependencies on other sections. For example, 'Depends on the output of the Research section on AI headlines.'"
+        )
+    )
+    children: List["NewsletterSection"] = Field(
+        default_factory=list,
+        description="Child sections or subsections, enabling a nested newsletter structure."
+    )
 
-Generate the new execution blocks in valid JSON format, ensuring that:
-	•	Every block is immediately executable (i.e., does not depend on outputs that are not yet available).
-	•	The final item in the list is always a reconsideration block.
+# Allow recursive models
+NewsletterSection.model_rebuild()
 
-<Initial Execution Plan>
-{initial_execution_plan}
-</Initial Execution Plan>
-
-<Completed Items>
-{completed_items}
-</Completed Items>
-
-<Recent Reconsideration Block>
-{recent_reconsideration_block}
-</Recent Reconsideration Block>
-
-For reference, here is the newsletter metadata:
-<Newsletter Metadata>
-{newsletter_metadata}
-</Newsletter Metadata>
-
-<Output Format>
-You must return a valid ExecutionPlan object with items in this exact structure:
-
-{{
-  "items": [
-    // Research Blocks
-    {{
-      "id": "research_[topic]_[number]",
-      "block_type": "research",
-      "description": "Clear description of the research task",
-      "status": "pending",
-      "output": "",
-      "research_goal": "Specific research objective",
-      "desired_output": "Expected format or content of output",
-      "relevant_context": "Any context needed for this research",
-      "evaluation_criteria": "Criteria to assess research output"
-    }},
-    
-    // Template Builder Blocks
-    {{
-      "id": "template_[purpose]_[number]",
-      "block_type": "template_building",
-      "description": "Clear description of template building task",
-      "status": "pending",
-      "output": "",
-      "template_goal": "Goal for building/updating the template",
-      "constraints": "Any formatting constraints",
-      "notes": "Additional notes for template creation"
-    }},
-    
-    // Reconsideration Block (always include as the final item)
-    {{
-      "id": "reconsider_[phase]_[number]",
-      "block_type": "reconsideration",
-      "description": "Description of reconsideration checkpoint",
-      "status": "pending",
-      "output": "",
-      "reason": "Explanation for why reconsideration is needed",
-      "guiding_questions": ["Question 1", "Question 2"],
-      "proposed_changes": ""
-    }}
-  ]
-}}
-
-Important Requirements:
-1. The response MUST be valid JSON with an "items" array
-2. Every item MUST include the "block_type" field with one of: "research", "reconsideration", "template_building"
-3. Each item MUST have all required fields for its type:
-   - Research: id, block_type, description, status, research_goal, desired_output, relevant_context
-   - Template Building: id, block_type, description, status, template_goal
-   - Reconsideration: id, block_type, description, status, reason, guiding_questions
-4. The final item in the list MUST be a reconsideration block
-5. Use empty strings for missing optional fields, do not omit them
-</Output Format>
-"""
+class NewsletterTemplate(BaseModel):
+    sections: List[NewsletterSection] = Field(
+        default_factory=list,
+        description="The tree-like structure of newsletter sections."
+    )

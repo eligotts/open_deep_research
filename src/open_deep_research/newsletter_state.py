@@ -216,6 +216,7 @@ class ExecutionPlan(BaseModel):
     items: List[ExecutionItem] = Field(
         ..., description="Ordered list of execution items for the newsletter generation process"
     )
+    done: bool = Field(...,description="Whether the research and drafting process is done, and the final piece of content is ready to be written. Default to False.")
 
 class SearchQuery(BaseModel):
     search_query: str = Field(None, description="Query for web search.")
@@ -233,43 +234,7 @@ class Feedback(BaseModel):
         description="List of follow-up search queries.",
     )
 
-# ---------------------------------------------------------------------------
-# Enum to track the level of detail for each section
-# ---------------------------------------------------------------------------
-class SectionDetailLevel(str, Enum):
-    IDEA = "idea"         # Basic idea/placeholder
-    PARTIAL = "partial"   # Some research/template in place
-    COMPLETE = "complete" # Final content is ready
 
-# ---------------------------------------------------------------------------
-# Model for a section of the final newsletter
-# ---------------------------------------------------------------------------
-class NewsletterSection(BaseModel):
-    name: str = Field(..., description="The title of the section (e.g., 'Introduction', 'Analysis').")
-    definition: str = Field(..., description="A brief explanation of what this section should cover.")
-    template: Optional[str] = Field(
-        None, description="Optional instructions or formatting guidelines for the section's final output."
-    )
-    output: Optional[str] = Field(
-        None, description="The final written content of the section (populated when complete)."
-    )
-    detail_level: SectionDetailLevel = Field(
-        SectionDetailLevel.IDEA,
-        description="Indicates the current state of the section: idea, partial, or complete."
-    )
-    dependencies: Optional[List[str]] = Field(
-        default_factory=list,
-        description=(
-            "Notes about dependencies on other sections. For example, 'Depends on the output of the Research section on AI headlines.'"
-        )
-    )
-    children: List["NewsletterSection"] = Field(
-        default_factory=list,
-        description="Child sections or subsections, enabling a nested newsletter structure."
-    )
-
-# Allow recursive models
-NewsletterSection.model_rebuild()
 
 # ---------------------------------------------------------------------------
 # Overall Newsletter Template Model
@@ -377,11 +342,22 @@ class NewsletterMetadata(BaseModel):
         description="Archive of past newsletter editions for maintaining continuity, tracking themes, and avoiding repetition"
     )
 
+class SectionDraft(BaseModel):
+    title: str = Field(..., description="Title of the newsletter section")
+    content: str = Field("", description="Draft content for this section")
 
-class NewsletterTemplate(BaseModel):
-    sections: List[NewsletterSection] = Field(
-        default_factory=list,
-        description="The tree-like structure of newsletter sections."
+class ReportDraft(BaseModel):
+    draft_outline: str = Field(
+        "", 
+        description="A high-level outline of the newsletter structure, including key sections and intended focus for each."
+    )
+    sections: List[SectionDraft] = Field(
+        default_factory=list, 
+        description="List of section drafts representing individual parts of the newsletter."
+    )
+    revision_notes: str = Field(
+        "", 
+        description="Notes and suggestions for further refining the draft in subsequent iterations."
     )
 
 
@@ -397,16 +373,16 @@ class NewsletterState(TypedDict):
     execution_plan: ExecutionPlan
     initial_execution_plan: str
     completed_items: Annotated[list, operator.add]
-    template: NewsletterTemplate  # Updated to use NewsletterTemplate
+    draft: ReportDraft 
     final_report: str # Final report
 
 class ResearchBlockState(TypedDict):
-    researchItem: ResearchBlock
     search_queries: list[SearchQuery]
     source_str: str
-    completed_items: list[ResearchBlock]
 
     # might only need these
+    completed_items: list[ResearchBlock]
+    researchItem: ResearchBlock
     messages: Annotated[Sequence[BaseMessage], operator.add]
 
 class ResearchBlockOutputState(TypedDict):

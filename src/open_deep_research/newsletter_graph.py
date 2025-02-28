@@ -10,21 +10,49 @@ from langgraph.constants import Send
 from langgraph.graph import START, END, StateGraph
 from langgraph.types import interrupt, Command
 
+from langchain_community.tools import TavilySearchResults
+from langgraph.prebuilt import ToolNode
+from langchain_community.tools.pubmed.tool import PubmedQueryRun
+from langchain.agents import load_tools
+
+
 from src.open_deep_research.newsletter_state import (
     NewsletterStateInput, NewsletterStateOutput, NewsletterState, 
     ResearchBlockState, ResearchBlockOutputState, ExecutionPlan, 
     ReconsiderationBlock, Status, ResearchBlock, TemplateBuilderItem, 
-    NewsletterTemplate, NewsletterSection, SchemaAdapter, openai_compatible, Queries, Feedback, BlockType
+    ReportDraft, SchemaAdapter, openai_compatible, Queries, Feedback, BlockType
 )
-from src.open_deep_research.newsletter_prompts import template_builder_instructions, query_writer_instructions, section_writer_instructions, section_grader_instructions, initial_execution_plan_creation, execution_block_creation_instructions
+from src.open_deep_research.newsletter_prompts import template_builder_instructions, query_writer_instructions, section_writer_instructions, section_grader_instructions, initial_execution_plan_creation, execution_block_creation_instructions, research_system_prompt_creation, summary_system_prompt
 from src.open_deep_research.configuration import Configuration
 from src.open_deep_research.utils import tavily_search_async, deduplicate_and_format_sources, format_sections, perplexity_search
 from src.open_deep_research.logger import NewsletterLogger
+
+
 
 import json
 # Set writer model
 writer_model = ChatAnthropic(model=Configuration.writer_model, temperature=0) 
 planner_model = ChatOpenAI(model=Configuration.planner_model)
+# TOOLS
+tavily_tool = TavilySearchResults(
+    max_results=5,
+    search_depth="advanced",
+    include_answer=True,
+    include_raw_content=True,
+    include_images=True,
+    # include_domains=[...],
+    # exclude_domains=[...],
+    # name="...",            # overwrite default tool name
+    # description="...",     # overwrite default tool description
+    # args_schema=...,       # overwrite default args_schema: BaseModel
+)
+tools = [tavily_tool, PubmedQueryRun()] + load_tools(
+    ["arxiv"],
+)
+tool_node = ToolNode(tools)
+
+model_with_tools = ChatAnthropic(model=Configuration.writer_model, temperature=0).bind_tools(tools)
+
 
 # Nodes
 def entry_worker(state: NewsletterState, config: RunnableConfig):
@@ -72,7 +100,7 @@ def entry_worker(state: NewsletterState, config: RunnableConfig):
     )
 
     # Create the initial execution plan
-    initial_execution_plan = ExecutionPlan(items=[initial_plan_reconsideration_item])
+    initial_execution_plan = ExecutionPlan(items=[initial_plan_reconsideration_item], done=False)
 
     # Log the initial state
     logger.log_state_update(
@@ -250,78 +278,97 @@ def template_builder(state: NewsletterState, config: RunnableConfig):
     execution_plan = state["execution_plan"]
     template_builder_item = execution_plan.items.pop(0)
 
-    # Get current state
-    current_template = state.get("template", None)
-    topic = state["topic"]
+
+    # Get the metadata
+    newsletter_metadata = state["newsletter_metadata"]
+
+    # Get the current report draft if it exists
+    current_draft = state.get("draft", None)
+
+    # get the topic, title, target audience, newsletter_goal, desired_tone, content_focus, content_type
+    # structure_type, desired_length, preferred_writing_style, template, and format into a clean string
+    metadata_dict = {
+        "Topic": newsletter_metadata.topic,
+        "Title": newsletter_metadata.title if newsletter_metadata.title else "Not specified",
+        "Target Audience": newsletter_metadata.target_audience,
+        "Newsletter Goal": newsletter_metadata.newsletter_goal,
+        "Desired Tone": newsletter_metadata.desired_tone,
+        "Content Focus": newsletter_metadata.content_focus if newsletter_metadata.content_focus else "Not specified",
+        "Content Type": newsletter_metadata.content_type if newsletter_metadata.content_type else "Not specified",
+        "Structure Type": newsletter_metadata.structure_type if newsletter_metadata.structure_type else "Not specified",
+        "Desired Length": newsletter_metadata.desired_length.value if newsletter_metadata.desired_length else "Not specified",
+        "Preferred Writing Style": newsletter_metadata.preferred_writing_style if newsletter_metadata.preferred_writing_style else "Not specified",
+        "Template": newsletter_metadata.template if newsletter_metadata.template else "Not specified"
+    }
     
-    # Format completed items for context
-    new_information = "\n\n".join([
-        f"Item {item.id}:\n"
-        f"Type: {type(item).__name__}\n"
-        f"Description: {item.description}\n"
-        f"Output:\n{item.output}"
-        for item in state.get("completed_items", [])
-        if item.output
-    ])
+    # Convert to formatted string
+    formatted_metadata = "\n".join([f"{key}: {value}" for key, value in metadata_dict.items()])
+    
+    # Get recurring themes if they exist
+    if newsletter_metadata.recurring_themes:
+        formatted_metadata += "\nRecurring Themes: " + ", ".join(newsletter_metadata.recurring_themes)
+
+    # Get any completed items that might contain information relevant to the template
+    completed_items = state.get("completed_items", [])
+    new_information = ""
+    
+    if completed_items:
+        # Format relevant completed items for template context
+        research_outputs = []
+        for item in completed_items:
+            if isinstance(item, ResearchBlock) and item.status == Status.COMPLETED:
+                research_outputs.append(f"Research: {item.id}\nGoal: {item.research_goal}\nOutput: {item.output}")
+        
+        if research_outputs:
+            new_information = "Research Findings:\n" + "\n\n".join(research_outputs)
+
+    # Get the current logger instance
+    logger = NewsletterLogger.get_current_logger()
 
     try:
         # Generate system prompt
         system_instructions = template_builder_instructions.format(
-            topic=topic,
-            current_template=current_template.model_dump_json(indent=2) if current_template else "No template exists yet",
+            newsletter_metadata=formatted_metadata,
+            current_draft=current_draft.model_dump_json(indent=2) if isinstance(current_draft, ReportDraft) else "No draft exists yet",
             template_goal=template_builder_item.template_goal,
-            new_information=new_information if new_information else "No new information available"
+            constraints=template_builder_item.constraints if template_builder_item.constraints else "No specific constraints",
+            new_information=new_information if new_information else "No new information available",
+            notes=template_builder_item.notes if template_builder_item.notes else "No additional notes"
         )
 
         # Generate new template using our OpenAI-compatible helper
-        new_template = generate_newsletter_template(system_instructions)
+        new_draft = generate_report_draft(system_instructions)
 
         # Log the template update
-        logger = NewsletterLogger.get_current_logger()
         if logger:
             logger.log_template_update(
-                template=new_template.model_dump(),
+                template=new_draft.model_dump(),
                 reason=template_builder_item.template_goal,
                 node_name="template_builder"
             )
 
-        # Record the changes in the template builder item's output
+        # set the new template to be the output of the template_builder_item
+        template_builder_item.output = new_draft.model_dump_json(indent=4)
+        
+        # set it to complete
         template_builder_item.status = Status.COMPLETED
-        template_builder_item.output = (
-            f"Template updated:\n"
-            f"Title: {new_template.title}\n"
-            f"Sections: {len(new_template.sections)}\n"
-            f"Changes: {template_builder_item.template_goal}"
-        )
-
-        # Log the completed template builder item
-        logger = NewsletterLogger.get_current_logger()
-        if logger:
-            logger.log_execution_item(
-                item_type="TemplateBuilderItem",
-                item_id=template_builder_item.id,
-                description=template_builder_item.description,
-                status=template_builder_item.status.value,
-                output=template_builder_item.output
-            )
 
         return {
-            "template": new_template,
+            "draft": new_draft,
             "completed_items": [template_builder_item]
         }
     except Exception as e:
         # Log any errors during template building
-        logger = NewsletterLogger.get_current_logger()
         if logger:
             logger.log_error(e, f"Error building template for {template_builder_item.id}")
         raise
 
 @openai_compatible
-def generate_newsletter_template(system_instructions: str) -> NewsletterTemplate:
-    """Helper function to generate newsletter template using OpenAI"""
+def generate_report_draft(system_instructions: str) -> ReportDraft:
+    """Helper function to generate report draft using OpenAI"""
     response = planner_model.invoke([
         SystemMessage(content=system_instructions),
-        HumanMessage(content="Generate or update the newsletter template based on the provided information.")
+        HumanMessage(content="Generate or update the report draft based on the provided information.")
     ])
     
     # Get the current logger instance
@@ -335,7 +382,7 @@ def generate_newsletter_template(system_instructions: str) -> NewsletterTemplate
         )
     
     # Parse the content from the AIMessage into our NewsletterTemplate model
-    return NewsletterTemplate.model_validate_json(response.content)
+    return ReportDraft.model_validate_json(response.content)
 
 def generate_queries(state: ResearchBlockState, config: RunnableConfig):
     """ Generate search queries for a report section """
@@ -534,18 +581,135 @@ def write_section(state: ResearchBlockState, config: RunnableConfig) -> Command[
             logger.log_error(e, f"Error writing section for {research_item.id}")
         raise
 
+def build_research_system_prompt(state: ResearchBlockState):
+
+    # retreive the research block
+    research_item = state["researchItem"]
+
+    # Get the names of available tools as a comma-separated string
+    tool_names = ", ".join([tool.name for tool in tools])
+    
+    # build the system prompt
+    research_system_prompt = research_system_prompt_creation.format(
+        research_goal=research_item.research_goal,
+        desired_output=research_item.desired_output,
+        relevant_context=research_item.relevant_context or "No additional context provided",
+        evaluation_criteria=research_item.evaluation_criteria or "No specific evaluation criteria provided",
+        tool_names=tool_names
+    )
+    
+    # Log the system prompt creation
+    logger = NewsletterLogger.get_current_logger()
+    if logger:
+        logger.log_llm_interaction(
+            prompt=research_system_prompt,
+            response="System prompt created",
+            context=f"Building research system prompt for {research_item.id}"
+        )
+
+    # Return the system prompt as a message to be sent to the model
+    return {"messages": [SystemMessage(content=research_system_prompt), HumanMessage(content="Please conduct the research.")]}
+
+
+def should_continue(state: ResearchBlockState):
+    messages = state["messages"]
+    last_message = messages[-1]
+    if last_message.tool_calls:
+        return "tools"
+    return "end"
+
+
+def call_model(state: ResearchBlockState):
+    messages = state["messages"]
+    response = model_with_tools.invoke(messages)
+    return {"messages": [response]}
+
+
+def end_node(state: ResearchBlockState):
+    # retreive the research block
+    research_item = state["researchItem"]
+    messages = state["messages"]
+    
+    # Extract relevant information from messages for summarization
+    conversation_context = "\n\n".join([
+        f"{msg.type}: {msg.content}" 
+        for msg in messages 
+        if hasattr(msg, "content") and msg.content
+    ])
+    
+    # Build the system prompt for summarization
+    summary_system_prompt_final = summary_system_prompt.format(
+        research_goal=research_item.research_goal,
+        desired_output=research_item.desired_output,
+        evaluation_criteria=research_item.evaluation_criteria or "No specific evaluation criteria provided",
+        conversation_context=conversation_context
+    )
+
+    # Generate the summary
+    summary = writer_model.invoke([
+        SystemMessage(content=summary_system_prompt_final),
+        HumanMessage(content="Please summarize the research findings.")
+    ])
+
+    # Log the summary generation
+    logger = NewsletterLogger.get_current_logger()
+    if logger:
+        logger.log_llm_interaction(
+            prompt=summary_system_prompt_final,
+            response=summary.content,
+            context=f"Generating summary for {research_item.id}"
+        )
+
+    # Update the research item with the summary and mark as completed
+    research_item.output = summary.content
+    research_item.status = Status.COMPLETED
+    
+    # Log the completed research item
+    if logger:
+        logger.log_execution_item(
+            item_type="ResearchItem",
+            item_id=research_item.id,
+            description=research_item.description,
+            status=research_item.status.value,
+            output=research_item.output
+        )
+
+    # Return the completed research item
+    return Command(
+        update={"completed_items": [research_item]},
+        goto=END
+    )
+
+def check_done(state: NewsletterState):
+
+    if state["execution_plan"].done:
+        return END
+    return "execution_orchestrator"
 # Report section sub-graph -- 
 
 # Add nodes 
 research_worker = StateGraph(ResearchBlockState, output=ResearchBlockOutputState)
-research_worker.add_node("generate_queries", generate_queries)
-research_worker.add_node("search_web", search_web)
-research_worker.add_node("write_section", write_section)
+research_worker.add_node("generate_context_prompt", build_research_system_prompt)
+research_worker.add_node("agent", call_model)
+research_worker.add_node("tools", tool_node)
+research_worker.add_node("end", end_node)
 
 # Add edges
-research_worker.add_edge(START, "generate_queries")
-research_worker.add_edge("generate_queries", "search_web")
-research_worker.add_edge("search_web", "write_section")
+research_worker.add_edge(START, "generate_context_prompt")
+research_worker.add_edge("generate_context_prompt", "agent")
+research_worker.add_conditional_edges("agent", should_continue, ["tools", "end"])
+research_worker.add_edge("tools", "agent")
+
+# # Add nodes 
+# research_worker = StateGraph(ResearchBlockState, output=ResearchBlockOutputState)
+# research_worker.add_node("generate_queries", generate_queries)
+# research_worker.add_node("search_web", search_web)
+# research_worker.add_node("write_section", write_section)
+
+# # Add edges
+# research_worker.add_edge(START, "generate_queries")
+# research_worker.add_edge("generate_queries", "search_web")
+# research_worker.add_edge("search_web", "write_section")
 
 # Outer graph -- 
 
@@ -561,9 +725,10 @@ builder.add_node("template_builder", template_builder)
 # Add edges
 builder.add_edge(START, "entry_worker")
 builder.add_edge("entry_worker", "execution_plan_builder")
-builder.add_edge("execution_plan_builder", "execution_orchestrator")
+# builder.add_edge("execution_plan_builder", "execution_orchestrator")
+builder.add_conditional_edges("execution_plan_builder", check_done, ["execution_orchestrator", END])
 builder.add_edge("research_with_web_research", "execution_orchestrator")
 builder.add_edge("template_builder", "execution_orchestrator")
-builder.add_edge("execution_orchestrator", END)
+# builder.add_edge("execution_orchestrator", END)
 
 graph = builder.compile()

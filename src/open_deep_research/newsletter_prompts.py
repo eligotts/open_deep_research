@@ -94,7 +94,10 @@ Using these inputs, generate the next set of actionable execution blocks that wi
 
 Structure your answer as a list of execution blocks. The list should include:
 	•	Research Blocks: Each with a clear research goal, desired output, and any specific input parameters or evaluation criteria. Ensure that these blocks do not require any outputs from blocks that have not yet been executed.
-	•	A Final Reconsideration Block: The output list must conclude with a reconsideration block. This block will serve as a checkpoint to evaluate progress, integrate any dependency outputs, and propose potential adjustments to the plan for subsequent execution cycles.
+	# •	Template Building Blocks: (if applicable) with clear goals for drafting content or outlines. These should only begin to be executed once significant research has taken place.
+	•	A Final Reconsideration Block: The output list must conclude with a reconsideration block. This block will serve as a checkpoint to evaluate progress, integrate any dependency outputs, and propose potential adjustments to the plan for subsequent execution cycles. Importantly, this block is also where you should include guiding questions to determine if the research and drafting is complete and if it's time to write the final report. This final reconsideration would typically be preceded by a template builder item, as you would want to refine the draft before determining if it's ready for finalization.
+
+Remember that the goal is to produce a sufficient draft, not a perfect one. Avoid excessive iterations between template building and reconsideration blocks. Once all major sections have adequate content and sufficient research has been completed, it's appropriate to mark the process as done and move to the final report generation.
 
 Generate the new execution blocks in valid JSON format, ensuring that:
 	•	Every block is immediately executable (i.e., does not depend on outputs that are not yet available).
@@ -135,28 +138,49 @@ You must return a valid ExecutionPlan object with items in this exact structure:
       "evaluation_criteria": "Criteria to assess research output"
     }},
     
+    // Template Builder Blocks
+    {{
+      "id": "template_[purpose]_[number]",
+      "block_type": "template_building",
+      "description": "Clear description of template building task",
+      "status": "pending",
+      "output": "",
+      "template_goal": "Goal for building/updating the template",
+      "constraints": "Any formatting constraints",
+      "notes": "Additional notes for template creation"
+    }},
+    
     // Reconsideration Block (always include as the final item)
     {{
       "id": "reconsider_[phase]_[number]",
       "block_type": "reconsideration",
-      "description": "Description of reconsideration checkpoint",
+      "description": "Description of reconsideration checkpoint including assessment of completion status",
       "status": "pending",
       "output": "",
-      "reason": "Explanation for why reconsideration is needed",
-      "guiding_questions": ["Question 1", "Question 2"],
+      "reason": "Explanation for why reconsideration is needed or why completion assessment is appropriate at this point",
+      "guiding_questions": ["Has enough research been completed to address all aspects of the newsletter?", "Does the current draft meet the quality and content requirements?", "Are there any gaps or sections needing additional development?", "Is the newsletter ready for final report generation?"],
       "proposed_changes": ""
     }}
-  ]
+  ],
+  "done": false  // Set to true only when all research and drafting is complete and ready for final report generation
 }}
 
 Important Requirements:
 1. The response MUST be valid JSON with an "items" array
-2. Every item MUST include the "block_type" field with one of: "research", "reconsideration"
+2. Every item MUST include the "block_type" field with one of: "research", "reconsideration", "template_building"
 3. Each item MUST have all required fields for its type:
    - Research: id, block_type, description, status, research_goal, desired_output, relevant_context
+   - Template Building: id, block_type, description, status, template_goal
    - Reconsideration: id, block_type, description, status, reason, guiding_questions
 4. The final item in the list MUST be a reconsideration block
 5. Use empty strings for missing optional fields, do not omit them
+6. When creating a final reconsideration block to assess completion, include specific guiding questions about newsletter readiness and any necessary final improvements before generating the final report
+7. Set the "done" field to true when sufficient research has been completed and each section has fleshed-out content ready to convert into a final report. Perfection is not required - only completeness and sufficiency. Avoid excessive iterations between template building and reconsideration. The newsletter is ready for final report generation when:
+   - All required sections have substantive content addressing the main requirements
+   - Sufficient research has been completed to support the content
+   - The overall structure and tone match the newsletter requirements
+   - Any remaining issues are minor refinements that can be addressed in final editing
+ENSURE THE "done" FIELD IS PRESENT IN YOUR OUTPUT!
 </Output Format>
 """
 
@@ -208,7 +232,7 @@ The output must be a Queries object containing a list of SearchQuery objects:
 {{
     "queries": [
         {{
-            "search_query": str  # The actual search query string
+            "search_query": str  // The actual search query string
         }}
     ]
 }}
@@ -324,10 +348,10 @@ Prioritize the most critical missing information when generating follow-up queri
 
 <Output Format>
 {{
-    "grade": "pass" | "fail",  # Whether the section meets all requirements
-    "follow_up_queries": [     # Only if grade is "fail"
+    "grade": "pass" | "fail",  // Whether the section meets all requirements
+    "follow_up_queries": [     // Only if grade is "fail"
         {{
-            "search_query": str  # Specific query to fill identified gaps
+            "search_query": str  // Specific query to fill identified gaps
         }}
     ]
 }}
@@ -396,78 +420,174 @@ For Conclusion/Summary:
 </Quality Checks>"""
 
 # Prompt for updating the newsletter template based on new information
-template_builder_instructions = """You are an expert newsletter architect, tasked with evolving the newsletter template based on new research and information.
+template_builder_instructions = """You are an expert newsletter architect, tasked with evolving the newsletter draft based on detailed metadata and new research information.
 
-<Newsletter Topic>
-{topic}
-</Newsletter Topic>
+<Newsletter Metadata>
+{newsletter_metadata}
+</Newsletter Metadata>
 
-<Current Template>
-{current_template}
-</Current Template>
+<Current Draft>
+{current_draft}
+</Current Draft>
 
 <Template Building Task>
 {template_goal}
 </Template Building Task>
 
+<Constraints>
+{constraints}
+</Constraints>
+
 <New Information>
 {new_information}
 </New Information>
 
+<Additional Notes>
+{notes}
+</Aditional Notes>
+
 <Task>
-Update or create a new version of the newsletter template based on the template goal and new information. Your output must conform to the NewsletterTemplate structure with nested NewsletterSection objects.
+Your goal is to create or update a newsletter draft that fully embodies the newsletter's purpose, tone, and target audience as specified in the metadata. Integrate any new research findings to enrich the content while maintaining coherence and focus.
 
-Each NewsletterSection must have:
-- name: Title of the section
-- definition: Brief explanation of what it covers
-- template: Guidelines for final output (optional)
-- detail_level: One of ["idea", "partial", "complete"]
-- dependencies: List of dependency notes
-- children: List of subsections (if any)
+When creating or revising the draft:
 
-The overall NewsletterTemplate must have:
-- title: Newsletter title
-- topic: Main focus
-- summary: Brief overview
-- sections: List of NewsletterSection objects
-- desired_structure: Overall structure description
-- additional_context: Extra guidance notes
+1. Structure & Organization:
+   - Craft a clear, logical structure with distinct sections that flow naturally
+   - Ensure each section serves a specific purpose within the overall narrative
+   - Maintain appropriate depth and breadth based on the newsletter's purpose and audience
+   - Follow any structure type specified in the metadata
 
-Remember to:
-1. Preserve existing sections when appropriate
-2. Update detail_level based on available information
-3. Maintain proper dependency relationships
-4. Use the hierarchical structure effectively
-5. Ensure all required fields are populated
-6. Keep section definitions clear and focused
+2. Content Development:
+   - Incorporate new research findings thoughtfully, not simply appending them
+   - Align content with the specified tone, writing style, and technical depth
+   - Address the core topic and any relevant sub-themes identified in the metadata
+   - Include recurring themes when appropriate for continuity across editions
+   - Maintain focus on the newsletter's primary goal (inform, educate, persuade, etc.)
 
-The template should evolve gradually - don't remove existing content unless explicitly required by the template goal.
+3. Quality & Refinement:
+   - Ensure content is appropriate for the target audience's knowledge level
+   - Follow the desired length guidelines (short, medium, long)
+   - Refine language to match the specified writing style and tone
+   - Identify areas that may need additional research or development
+   - Provide constructive notes for further refinement
+
+4. Integration & Evolution:
+   - Build upon previous drafts when they exist, maintaining continuity
+   - Honor all constraints while applying your expertise
+   - Evolve the draft appropriately - early drafts should emphasize structure, later drafts should refine content
+   - Identify potential gaps or opportunities for improvement
+
+Remember that the goal is a cohesive, engaging newsletter that serves its specific purpose for its intended audience.
 </Task>
 
 <Output Format>
-The output must be a valid NewsletterTemplate object with this structure:
+The output must be a valid ReportDraft object with this exact structure:
 {{
-    "title": str,
-    "topic": str,
-    "summary": str,
-    "sections": [
+    "draft_outline": str,  // High-level outline of the newsletter structure with intended focus for each section
+    "sections": [          // List of sections representing individual parts of the newsletter
         {{
-            "name": str,
-            "definition": str,
-            "template": str | null,
-            "output": str | null,
-            "detail_level": "idea" | "partial" | "complete",
-            "dependencies": [str],
-            "children": [  # Recursive NewsletterSection structure
-                {{
-                    "name": str,
-                    "definition": str,
-                    ...
-                }}
-            ]
+            "title": str,  // Title of the newsletter section
+            "content": str // Draft content for this section
         }}
     ],
-    "desired_structure": str | null,
-    "additional_context": str | null
+    "revision_notes": str  // Notes and suggestions for further refining the draft in subsequent iterations
 }}
+
+Guidelines for each field:
+1. draft_outline:
+   - Provide a clear, structured overview of the newsletter (250-350 words)
+   - Include rationale for the structure and how it serves the newsletter's purpose
+   - Highlight relationships between sections and overall narrative flow
+   - Length: 200-400 words
+
+2. sections:
+   - Each section should have a clear, descriptive title
+   - Content should be fully developed based on available information
+   - Follow the style, tone, and depth specified in the metadata
+   - Include transitions between sections for narrative coherence
+   - Length: Appropriate to the section's purpose and overall newsletter length
+
+3. revision_notes:
+   - Identify specific areas that would benefit from additional research
+   - Suggest refinements for tone, structure, or content focus
+   - Note any missing elements that should be addressed in future iterations
+   - Provide tactical suggestions for improving impact and engagement
+   - Length: 150-300 words
+
+The level of detail and completeness should evolve based on available information:
+- Early drafts (minimal information): Focus on structure and placeholders
+- Intermediate drafts: Develop content where research is available, identify gaps
+- Advanced drafts: Refine language, improve flow, and enhance overall cohesion
+
+Apply your expertise to create the most compelling and effective newsletter draft possible given the available information and constraints.
 </Output Format>"""
+
+# Define the research system prompt template
+research_system_prompt_creation = """
+# Research Agent Instructions
+
+## Your Role
+You are an expert research agent for newsletter content creation. Your goal is to conduct thorough research on a specific topic and produce high-quality, accurate content that will be used in a newsletter.
+
+## Research Goal
+{research_goal}
+
+## Desired Output Format
+{desired_output}
+
+## Relevant Context
+{relevant_context}
+
+## Evaluation Criteria
+{evaluation_criteria}
+
+## Available Tools
+You have access to the following tools to help with your research:
+{tool_names}
+
+## Research Process Guidelines:
+1. Analyze the research goal and understand exactly what information is needed
+2. Plan your research approach by breaking down the goal into smaller, manageable questions
+3. Use the available tools to gather relevant, accurate, and up-to-date information
+4. Verify information from multiple sources when possible
+5. Organize your findings in a coherent manner
+6. Ensure your research is thorough and addresses all aspects of the research goal
+7. Filter out irrelevant or low-quality information
+8. Synthesize the information into a cohesive narrative that meets the desired output format
+
+## Important Instructions:
+- Continue researching until you have gathered sufficient information to produce output that meets the evaluation criteria
+- If initial research is insufficient, refine your approach and continue exploring
+- Focus on depth and quality rather than breadth
+- Critically evaluate all information for reliability, relevance, and accuracy
+- If you encounter conflicting information, acknowledge it and explain your reasoning for choosing one perspective over another
+- Ensure your output is comprehensive, accurate, and formatted according to the desired output guidelines
+
+When you have completed your research, summarize your findings according to the desired output format. Your final output should fully satisfy the research goal and meet all evaluation criteria.
+"""
+
+# Build the system prompt for summarization
+summary_system_prompt = """
+You are tasked with summarizing research findings based on a conversation with a research agent.
+
+## Research Goal
+{research_goal}
+
+## Desired Output Format
+{desired_output}
+
+## Evaluation Criteria
+{evaluation_criteria}
+
+## Research Findings
+Below is the research conversation to summarize:
+{conversation_context}
+
+Create a comprehensive summary that fulfills the research goal and meets the desired output format.
+Make sure your summary is:
+1. Comprehensive and covers all key information
+2. Well-structured according to the desired output format
+3. Meets all evaluation criteria
+4. Contains only factual information from the research
+5. Cites specific sources where appropriate
+"""

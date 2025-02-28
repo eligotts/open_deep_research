@@ -17,7 +17,8 @@ dependencies = [
     "tavily-python>=0.5.0",
     "langchain-groq>=0.2.4",
     "ipykernel>=6.29.5",
-    "langchain-mcp-tools>=0.0.1",
+    "xmltodict>=0.13.0",
+    "arxiv>=1.2.0"
 ]
 
 [project.optional-dependencies]
